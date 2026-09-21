@@ -1,0 +1,456 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Glimmer Safari — Safe to Reshape</title>
+  <style>
+    :root {
+      --gold: #f3c56b;
+      --ink: #1b1410;
+      --paper: rgba(18, 12, 8, 0.72);
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { width: 100%; height: 100%; overflow: hidden; background: #1a120c; font-family: Georgia, "Times New Roman", serif; color: #f8edd8; }
+    canvas { display: block; }
+    #hud {
+      position: fixed; inset: 0; pointer-events: none;
+      z-index: 5;
+    }
+    #topbar {
+      position: absolute; top: 18px; left: 18px; right: 18px;
+      display: flex; justify-content: space-between; align-items: flex-start; gap: 16px;
+    }
+    .chip {
+      background: var(--paper);
+      border: 1px solid rgba(243,197,107,.35);
+      padding: 10px 14px;
+      border-radius: 14px;
+      backdrop-filter: blur(10px);
+      letter-spacing: .04em;
+    }
+    .chip strong { color: var(--gold); }
+    #hint { font-size: 13px; opacity: .85; max-width: 280px; text-align: right; }
+    #toast {
+      position: absolute; left: 50%; bottom: 36px; transform: translateX(-50%) translateY(20px);
+      background: var(--paper);
+      border: 1px solid rgba(243,197,107,.45);
+      padding: 14px 22px; border-radius: 16px;
+      opacity: 0; transition: opacity .35s, transform .35s;
+      text-align: center; min-width: 260px;
+    }
+    #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+    #toast .kicker { font-size: 11px; letter-spacing: .18em; text-transform: uppercase; color: var(--gold); }
+    #toast .title { font-size: 20px; margin-top: 4px; }
+    #overlay, #win {
+      position: fixed; inset: 0; z-index: 8;
+      display: flex; align-items: center; justify-content: center;
+      background: radial-gradient(ellipse at center, rgba(60,35,16,.82), rgba(8,6,4,.94));
+    }
+    #win { display: none; }
+    .card {
+      width: min(520px, 92vw);
+      padding: 36px 32px 28px;
+      border-radius: 22px;
+      background: rgba(24,16,10,.88);
+      border: 1px solid rgba(243,197,107,.4);
+      text-align: center;
+      box-shadow: 0 20px 80px rgba(0,0,0,.45);
+    }
+    h1 {
+      font-weight: 500;
+      font-size: clamp(32px, 6vw, 48px);
+      color: var(--gold);
+      line-height: 1.05;
+    }
+    .sub { margin: 14px 0 26px; opacity: .86; line-height: 1.5; }
+    button {
+      pointer-events: auto;
+      cursor: pointer;
+      border: 0;
+      background: var(--gold);
+      color: var(--ink);
+      font: 600 16px/1 Georgia, serif;
+      padding: 12px 22px;
+      border-radius: 999px;
+      letter-spacing: .04em;
+    }
+    button:hover { filter: brightness(1.05); }
+    .keys { margin-top: 18px; font-size: 13px; opacity: .7; }
+  </style>
+</head>
+<body>
+  <div id="hud">
+    <div id="topbar">
+      <div class="chip">Glimmers <strong id="score">0</strong> / 21</div>
+      <div class="chip" id="hint">WASD walk · drag to look · Space jump</div>
+    </div>
+    <div id="toast">
+      <div class="kicker">Pocketed</div>
+      <div class="title" id="toastTitle">The Zone Dial</div>
+    </div>
+  </div>
+  <div id="overlay">
+    <div class="card">
+      <h1>Glimmer Safari</h1>
+      <p class="sub">A calm Three.js meadow. Walk the golden hour and pocket 21 joy-pebbles — each one a SAFE TO RESHAPE practice.</p>
+      <button id="startBtn" type="button">Enter the meadow</button>
+      <p class="keys">W A S D to walk &nbsp;·&nbsp; mouse drag to look &nbsp;·&nbsp; Space to jump</p>
+    </div>
+  </div>
+  <div id="win">
+    <div class="card">
+      <h1>All 21 pocketed</h1>
+      <p class="sub">Half-won is still won. The glimmers are yours — tiny practices you can carry back into the day.</p>
+      <button id="againBtn" type="button">Walk it again</button>
+    </div>
+  </div>
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.160.0/build/three.module.js"
+    }
+  }
+  </script>
+  <script type="module">
+    import * as THREE from 'three';
+
+    const PRACTICES = [
+      'The Zone Dial',
+      'The Thank-You Ambush',
+      'Match the Firecracker',
+      'Name It to Frame It',
+      'Teen Achhi Baatein',
+      'Marinate the Moment',
+      'Warm-Wishes Rounds',
+      'Just Move the Body',
+      'The Joy Fixed-Deposit',
+      'Glimmer Safari',
+      'Follow the Thread to Who You Help',
+      'The Big Sigh Reset',
+      'Calendar the Joy',
+      'Tiny Wins, Big Flywheel',
+      'Good-Stuff Radar',
+      'Pocket the Pebbles',
+      'Booby-Trap Your Desk with Joy',
+      'Call Out Your Own Strength',
+      'Future You, Fully Loaded',
+      'Reps Till It\'s Automatic',
+      'Half-Won Is Still Won'
+    ];
+
+    const overlay = document.getElementById('overlay');
+    const winEl = document.getElementById('win');
+    const scoreEl = document.getElementById('score');
+    const toastEl = document.getElementById('toast');
+    const toastTitle = document.getElementById('toastTitle');
+    const startBtn = document.getElementById('startBtn');
+    const againBtn = document.getElementById('againBtn');
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color('#7eb7d0');
+    scene.fog = new THREE.FogExp2('#c9a36a', 0.018);
+
+    const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.1, 200);
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(innerWidth, innerHeight);
+    renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+    renderer.shadowMap.enabled = true;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.15;
+    document.body.appendChild(renderer.domElement);
+
+    scene.add(new THREE.HemisphereLight('#ffe6b0', '#2d4a2a', 1.05));
+    const sun = new THREE.DirectionalLight('#ffd39a', 1.35);
+    sun.position.set(-18, 22, 10);
+    sun.castShadow = true;
+    sun.shadow.mapSize.set(1024, 1024);
+    sun.shadow.camera.near = 2;
+    sun.shadow.camera.far = 80;
+    sun.shadow.camera.left = -40;
+    sun.shadow.camera.right = 40;
+    sun.shadow.camera.top = 40;
+    sun.shadow.camera.bottom = -40;
+    scene.add(sun);
+
+    const ground = new THREE.Mesh(
+      new THREE.CircleGeometry(56, 64),
+      new THREE.MeshStandardMaterial({ color: '#4d7a3e', roughness: 0.92 })
+    );
+    ground.rotation.x = -Math.PI / 2;
+    ground.receiveShadow = true;
+    scene.add(ground);
+
+    const ring = new THREE.Mesh(
+      new THREE.RingGeometry(54.2, 56, 64),
+      new THREE.MeshStandardMaterial({ color: '#c7b07a', side: THREE.DoubleSide })
+    );
+    ring.rotation.x = -Math.PI / 2;
+    ring.position.y = 0.02;
+    scene.add(ring);
+
+    function makeTree(x, z, scale) {
+      const g = new THREE.Group();
+      const trunk = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.18 * scale, 0.26 * scale, 1.4 * scale, 6),
+        new THREE.MeshStandardMaterial({ color: '#5a3a22', roughness: 1 })
+      );
+      trunk.position.y = 0.7 * scale;
+      trunk.castShadow = true;
+      const leaves = new THREE.Mesh(
+        new THREE.ConeGeometry(1.15 * scale, 2.4 * scale, 7),
+        new THREE.MeshStandardMaterial({ color: '#2f5d32', roughness: 0.85 })
+      );
+      leaves.position.y = 2.1 * scale;
+      leaves.castShadow = true;
+      g.add(trunk, leaves);
+      g.position.set(x, 0, z);
+      scene.add(g);
+      return g;
+    }
+
+    const trees = [];
+    for (let i = 0; i < 46; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const r = 8 + Math.random() * 42;
+      const x = Math.cos(a) * r;
+      const z = Math.sin(a) * r;
+      if (Math.hypot(x, z) < 5) continue;
+      trees.push(makeTree(x, z, 0.7 + Math.random() * 1.1));
+    }
+
+    for (let i = 0; i < 18; i++) {
+      const rock = new THREE.Mesh(
+        new THREE.DodecahedronGeometry(0.35 + Math.random() * 0.55, 0),
+        new THREE.MeshStandardMaterial({ color: '#8a7a66', roughness: 1 })
+      );
+      const a = Math.random() * Math.PI * 2;
+      const r = 6 + Math.random() * 40;
+      rock.position.set(Math.cos(a) * r, 0.2, Math.sin(a) * r);
+      rock.rotation.set(Math.random(), Math.random(), Math.random());
+      rock.castShadow = true;
+      scene.add(rock);
+    }
+
+    const player = new THREE.Group();
+    const body = new THREE.Mesh(
+      new THREE.CapsuleGeometry(0.32, 0.7, 4, 8),
+      new THREE.MeshStandardMaterial({ color: '#d7b07a', roughness: 0.55 })
+    );
+    body.position.y = 0.85;
+    body.castShadow = true;
+    const lantern = new THREE.Mesh(
+      new THREE.SphereGeometry(0.12, 12, 12),
+      new THREE.MeshStandardMaterial({ color: '#ffd27a', emissive: '#ffb347', emissiveIntensity: 1.4 })
+    );
+    lantern.position.set(0.28, 0.95, 0.12);
+    player.add(body, lantern);
+    player.position.set(0, 0, 8);
+    scene.add(player);
+
+    const playerLight = new THREE.PointLight('#ffc56a', 0.7, 7);
+    playerLight.position.y = 1.2;
+    player.add(playerLight);
+
+    const hues = [0xf3c56b, 0x7ad0c8, 0xf28b82, 0xc9a0ff, 0x9be7a2, 0xffd166];
+    const glimmers = [];
+    PRACTICES.forEach((name, i) => {
+      const a = (i / PRACTICES.length) * Math.PI * 2 + 0.4;
+      const r = 11 + (i % 5) * 5.2;
+      const color = hues[i % hues.length];
+      const mat = new THREE.MeshStandardMaterial({
+        color, emissive: color, emissiveIntensity: 1.1, roughness: 0.25, metalness: 0.1
+      });
+      const mesh = new THREE.Mesh(new THREE.SphereGeometry(0.38, 16, 16), mat);
+      mesh.position.set(Math.cos(a) * r, 0.85, Math.sin(a) * r);
+      mesh.castShadow = true;
+      const glow = new THREE.PointLight(color, 0.85, 6);
+      mesh.add(glow);
+      scene.add(mesh);
+      glimmers.push({ mesh, name, taken: false, phase: Math.random() * 6 });
+    });
+
+    const fireflies = new THREE.Group();
+    const ffGeo = new THREE.SphereGeometry(0.045, 6, 6);
+    for (let i = 0; i < 70; i++) {
+      const m = new THREE.Mesh(ffGeo, new THREE.MeshBasicMaterial({ color: '#ffe9a8' }));
+      m.position.set((Math.random() - 0.5) * 70, 0.4 + Math.random() * 4, (Math.random() - 0.5) * 70);
+      m.userData = { s: 0.4 + Math.random() * 1.2, p: Math.random() * 10 };
+      fireflies.add(m);
+    }
+    scene.add(fireflies);
+
+    const keys = Object.create(null);
+    let yaw = 0, pitch = 0.28, dragging = false, lastX = 0, lastY = 0;
+    let velY = 0, grounded = true, playing = false, collected = 0;
+    let toastT = 0;
+
+    addEventListener('keydown', (e) => { keys[e.code] = true; if (e.code === 'Space') e.preventDefault(); });
+    addEventListener('keyup', (e) => { keys[e.code] = false; });
+    addEventListener('mousedown', (e) => { if (!playing) return; dragging = true; lastX = e.clientX; lastY = e.clientY; });
+    addEventListener('mouseup', () => dragging = false);
+    addEventListener('mousemove', (e) => {
+      if (!dragging || !playing) return;
+      yaw -= (e.clientX - lastX) * 0.005;
+      pitch = Math.max(-0.1, Math.min(0.9, pitch + (e.clientY - lastY) * 0.004));
+      lastX = e.clientX; lastY = e.clientY;
+    });
+    addEventListener('touchstart', (e) => {
+      if (!playing || !e.touches.length) return;
+      dragging = true; lastX = e.touches[0].clientX; lastY = e.touches[0].clientY;
+    }, { passive: true });
+    addEventListener('touchend', () => dragging = false);
+    addEventListener('touchmove', (e) => {
+      if (!dragging || !playing || !e.touches.length) return;
+      const t = e.touches[0];
+      yaw -= (t.clientX - lastX) * 0.005;
+      pitch = Math.max(-0.1, Math.min(0.9, pitch + (t.clientY - lastY) * 0.004));
+      lastX = t.clientX; lastY = t.clientY;
+    }, { passive: true });
+    addEventListener('resize', () => {
+      camera.aspect = innerWidth / innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(innerWidth, innerHeight);
+    });
+
+    function showToast(name) {
+      toastTitle.textContent = name;
+      toastEl.classList.add('show');
+      toastT = 2.4;
+    }
+
+    function chime() {
+      try {
+        const ctx = new (window.AudioContext || window.webkitAudioContext)();
+        const o = ctx.createOscillator();
+        const g = ctx.createGain();
+        o.type = 'sine';
+        o.frequency.setValueAtTime(660, ctx.currentTime);
+        o.frequency.exponentialRampToValueAtTime(990, ctx.currentTime + 0.18);
+        g.gain.setValueAtTime(0.06, ctx.currentTime);
+        g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.28);
+        o.connect(g); g.connect(ctx.destination);
+        o.start(); o.stop(ctx.currentTime + 0.3);
+      } catch (err) {}
+    }
+
+    function resetWorld() {
+      collected = 0;
+      scoreEl.textContent = '0';
+      player.position.set(0, 0, 8);
+      velY = 0; yaw = 0; pitch = 0.28;
+      glimmers.forEach((g) => {
+        g.taken = false;
+        g.mesh.visible = true;
+      });
+      winEl.style.display = 'none';
+    }
+
+    startBtn.addEventListener('click', () => {
+      overlay.style.display = 'none';
+      playing = true;
+    });
+    againBtn.addEventListener('click', () => {
+      resetWorld();
+      playing = true;
+    });
+
+    const clock = new THREE.Clock();
+    function tick() {
+      requestAnimationFrame(tick);
+      const dt = Math.min(clock.getDelta(), 0.05);
+      const t = clock.elapsedTime;
+
+      glimmers.forEach((g) => {
+        if (g.taken) return;
+        g.mesh.position.y = 0.85 + Math.sin(t * 2.1 + g.phase) * 0.22;
+        g.mesh.rotation.y += dt * 0.9;
+      });
+      fireflies.children.forEach((f) => {
+        f.position.y += Math.sin(t * f.userData.s + f.userData.p) * 0.006;
+        f.material.opacity = 0.35 + Math.sin(t * 3 + f.userData.p) * 0.35;
+        f.material.transparent = true;
+      });
+
+      if (playing) {
+        const speed = (keys.ShiftLeft || keys.ShiftRight) ? 9 : 5.4;
+        let ix = 0, iz = 0;
+        if (keys.KeyW || keys.ArrowUp) iz -= 1;
+        if (keys.KeyS || keys.ArrowDown) iz += 1;
+        if (keys.KeyA || keys.ArrowLeft) ix -= 1;
+        if (keys.KeyD || keys.ArrowRight) ix += 1;
+        if (ix || iz) {
+          const len = Math.hypot(ix, iz);
+          ix /= len; iz /= len;
+          const fx = Math.sin(yaw);
+          const fz = Math.cos(yaw);
+          const rx = Math.cos(yaw);
+          const rz = -Math.sin(yaw);
+          player.position.x += (fx * iz + rx * ix) * speed * dt;
+          player.position.z += (fz * iz + rz * ix) * speed * dt;
+          player.rotation.y = Math.atan2(fx * iz + rx * ix, fz * iz + rz * ix);
+        }
+        if ((keys.Space || keys.KeyJ) && grounded) {
+          velY = 7.2;
+          grounded = false;
+        }
+        velY -= 22 * dt;
+        player.position.y += velY * dt;
+        if (player.position.y <= 0) {
+          player.position.y = 0;
+          velY = 0;
+          grounded = true;
+        }
+        const rad = Math.hypot(player.position.x, player.position.z);
+        if (rad > 52) {
+          player.position.x *= 52 / rad;
+          player.position.z *= 52 / rad;
+        }
+        trees.forEach((tr) => {
+          const dx = player.position.x - tr.position.x;
+          const dz = player.position.z - tr.position.z;
+          const d = Math.hypot(dx, dz);
+          if (d < 1.05 && d > 0.001) {
+            player.position.x += (dx / d) * (1.05 - d);
+            player.position.z += (dz / d) * (1.05 - d);
+          }
+        });
+        glimmers.forEach((g) => {
+          if (g.taken) return;
+          const dx = player.position.x - g.mesh.position.x;
+          const dz = player.position.z - g.mesh.position.z;
+          const dy = player.position.y + 0.9 - g.mesh.position.y;
+          if (dx * dx + dy * dy + dz * dz < 1.7) {
+            g.taken = true;
+            g.mesh.visible = false;
+            collected += 1;
+            scoreEl.textContent = String(collected);
+            showToast(g.name);
+            chime();
+            if (collected >= 21) {
+              playing = false;
+              winEl.style.display = 'flex';
+            }
+          }
+        });
+      }
+
+      if (toastT > 0) {
+        toastT -= dt;
+        if (toastT <= 0) toastEl.classList.remove('show');
+      }
+
+      const dist = 6.4;
+      const lookY = player.position.y + 1.25;
+      camera.position.set(
+        player.position.x + Math.sin(yaw) * Math.cos(pitch) * dist,
+        lookY + Math.sin(pitch) * dist + 1.1,
+        player.position.z + Math.cos(yaw) * Math.cos(pitch) * dist
+      );
+      camera.lookAt(player.position.x, lookY, player.position.z);
+      renderer.render(scene, camera);
+    }
+    tick();
+  </script>
+</body>
+</html>
